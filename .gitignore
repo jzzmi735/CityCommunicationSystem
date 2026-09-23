@@ -1,0 +1,61 @@
+# ---- 构建产物 ----
+build/
+build-*/
+build_*/
+out/
+bin/
+*.o
+*.obj
+*.exe
+*.dll
+*.a
+*.lib
+*.so
+*.pdb
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+compile_commands.json
+CTestTestfile.cmake
+
+# ---- Qt ----
+*.pro.user
+*.pro.user.*
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qmlc
+.qmake.stash
+
+# ---- IDE / 编辑器 ----
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---- Claude Code 本地配置 ----
+.claude/
+
+# ---- 系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- 临时文件 ----
+*.tmp
+*.bak
+*.orig
+
+# ---- 交换用的压缩包 ----
+# 成员之间传递代码请走 git 分支；确需打包时不要把压缩包提交进仓库。
+*.zip
+*.7z
+*.rar
+*.tar.gz

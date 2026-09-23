@@ -1,0 +1,9 @@
+8
+0   4   3   INF INF INF INF INF
+4   0   6   5   INF INF INF INF
+3   6   0   7   8   INF INF INF
+INF 5   7   0   2   9   INF INF
+INF INF 8   2   0   4   6   INF
+INF INF INF 9   4   0   3   5
+INF INF INF INF 6   3   0   2
+INF INF INF INF INF 5   2   0
