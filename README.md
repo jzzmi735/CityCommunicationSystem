@@ -196,6 +196,17 @@ huffman_acceptance   60 项断言  含 TobeTran -> CodeFile -> TextFile 文件�
 模块**缺位时**主程序照常编译运行，对应页面提示"模块未就绪"，其余功能不受影响；
 模块**就位后**只需重新执行一次 CMake 配置即可自动启用，无需改动界面代码。
 
+### 集成进度
+
+三模块集成成果位于 `dev-gui-crypto` 分支，已提交 PR #1 等待评审：
+
+```text
+https://github.com/jzzmi735/CityCommunicationSystem/pull/1
+```
+
+按《共同开发规则和接口约定》第 4.2 节，需至少一名成员检查后再合并到 `main`。
+`main` 目前仍是初始状态，尚未包含任何模块代码。
+
 ### 图数据文件
 
 `data/graph1.txt` 为题目图 1 的邻接矩阵（8 个城市，`INF` 表示不直连），
