@@ -342,12 +342,18 @@ std::uint8_t aesAffine(std::uint8_t value)
     return result;
 }
 
-/// AES S 盒的惰性初始化缓存。
+/// AES 查表与 S 盒的惰性初始化缓存。
 struct AesTables
 {
     std::uint8_t sbox[256];
     std::uint8_t invSbox[256];
     std::uint8_t rcon[11];
+
+    /// 预计算的 GF(2^8) 乘法表：mul2[a] = 2·a，mul3[a] = 3·a。
+    /// MixColumns 与 InvMixColumns 的系数全部可由它们异或组合得到，
+    /// 从而把热路径上的乘法化简为查表与异或。
+    std::uint8_t mul2[256];
+    std::uint8_t mul3[256];
 
     AesTables()
     {
@@ -375,6 +381,16 @@ struct AesTables
                 }
             }
             rcon[round] = value;
+        }
+
+        // mul2 与 mul3：Multiply-by-2 即左移一位，溢出时异或约简多项式 0x1B。
+        for (int i = 0; i < 256; ++i)
+        {
+            const std::uint8_t a = static_cast<std::uint8_t>(i);
+            const std::uint8_t doubled =
+                static_cast<std::uint8_t>((a << 1) ^ ((a & 0x80u) ? 0x1Bu : 0x00u));
+            mul2[i] = doubled;
+            mul3[i] = static_cast<std::uint8_t>(doubled ^ a);
         }
     }
 };
@@ -423,25 +439,30 @@ void aesExpandKey(const ByteVec& key, std::uint8_t roundKeys[AES_ROUNDS + 1][AES
     }
 }
 
-/// GF(2^8) 上的乘法，用于 MixColumns。
+/// GF(2^8) 上的乘法，用于 MixColumns / InvMixColumns。
+///
+/// 实现采用 xtime 分解而非逐位乘法：把系数写成 2 的幂之和后反复调用
+/// multiply-by-2，每次只需一次移位与一次条件异或。
+/// 早期的逐位版本在 MixColumns 的热路径上被调用数百万次，
+/// 是本模块的主要性能瓶颈。
 inline std::uint8_t gfMul(std::uint8_t a, std::uint8_t b)
 {
     std::uint8_t result = 0;
-    std::uint8_t x = a;
-    std::uint8_t y = b;
-    for (int bit = 0; bit < 8; ++bit)
+    std::uint8_t value  = a;
+
+    for (std::uint8_t factor = b; factor != 0; factor >>= 1)
     {
-        if (y & 1)
+        if (factor & 1u)
         {
-            result ^= x;
+            result ^= value;
         }
-        const std::uint8_t highBit = static_cast<std::uint8_t>(x & 0x80u);
-        x = static_cast<std::uint8_t>(x << 1);
+        // value *= 2（模约简多项式 0x11B）
+        const std::uint8_t highBit = static_cast<std::uint8_t>(value & 0x80u);
+        value = static_cast<std::uint8_t>(value << 1);
         if (highBit)
         {
-            x ^= 0x1Bu;
+            value ^= 0x1Bu;
         }
-        y = static_cast<std::uint8_t>(y >> 1);
     }
     return result;
 }
@@ -492,6 +513,11 @@ inline void aesShiftRows(std::uint8_t state[AES_BLOCK_BYTES], bool inverse)
 
 inline void aesMixColumns(std::uint8_t state[AES_BLOCK_BYTES], bool inverse)
 {
+    // 取一次查表引用，避免在内层循环里反复调用 aesTables()。
+    const AesTables& tables = aesTables();
+    const std::uint8_t* const m2 = tables.mul2;
+    const std::uint8_t* const m3 = tables.mul3;
+
     for (int col = 0; col < 4; ++col)
     {
         const std::uint8_t a0 = state[col * 4 + 0];
@@ -501,25 +527,57 @@ inline void aesMixColumns(std::uint8_t state[AES_BLOCK_BYTES], bool inverse)
 
         if (!inverse)
         {
+            // 系数矩阵为 [2 3 1 1] 的循环移位。
             state[col * 4 + 0] = static_cast<std::uint8_t>(
-                gfMul(a0, 2) ^ gfMul(a1, 3) ^ a2 ^ a3);
+                m2[a0] ^ m3[a1] ^ a2 ^ a3);
             state[col * 4 + 1] = static_cast<std::uint8_t>(
-                a0 ^ gfMul(a1, 2) ^ gfMul(a2, 3) ^ a3);
+                a0 ^ m2[a1] ^ m3[a2] ^ a3);
             state[col * 4 + 2] = static_cast<std::uint8_t>(
-                a0 ^ a1 ^ gfMul(a2, 2) ^ gfMul(a3, 3));
+                a0 ^ a1 ^ m2[a2] ^ m3[a3]);
             state[col * 4 + 3] = static_cast<std::uint8_t>(
-                gfMul(a0, 3) ^ a1 ^ a2 ^ gfMul(a3, 2));
+                m3[a0] ^ a1 ^ a2 ^ m2[a3]);
         }
         else
         {
+            // 逆矩阵系数为 [14 11 13 9] 的循环移位。
+            // 14 = 2·(2·(2·2)) ⊕ 2·(2·2) ⊕ 2·2，11 = 9 ⊕ 2，13 = 9 ⊕ 2·2，
+            // 统一用 mul2 反复组合，避免逐次调用通用乘法。
+            const std::uint8_t a0_2 = m2[a0], a0_4 = m2[a0_2], a0_8 = m2[a0_4];
+            const std::uint8_t a0_9 = static_cast<std::uint8_t>(a0_8 ^ a0);
+            const std::uint8_t a0_11 = static_cast<std::uint8_t>(a0_9 ^ a0_2);
+            const std::uint8_t a0_13 = static_cast<std::uint8_t>(a0_9 ^ a0_4);
+            const std::uint8_t a0_14 = static_cast<std::uint8_t>(
+                a0_8 ^ a0_4 ^ a0_2);
+
+            const std::uint8_t a1_2 = m2[a1], a1_4 = m2[a1_2], a1_8 = m2[a1_4];
+            const std::uint8_t a1_9 = static_cast<std::uint8_t>(a1_8 ^ a1);
+            const std::uint8_t a1_11 = static_cast<std::uint8_t>(a1_9 ^ a1_2);
+            const std::uint8_t a1_13 = static_cast<std::uint8_t>(a1_9 ^ a1_4);
+            const std::uint8_t a1_14 = static_cast<std::uint8_t>(
+                a1_8 ^ a1_4 ^ a1_2);
+
+            const std::uint8_t a2_2 = m2[a2], a2_4 = m2[a2_2], a2_8 = m2[a2_4];
+            const std::uint8_t a2_9 = static_cast<std::uint8_t>(a2_8 ^ a2);
+            const std::uint8_t a2_11 = static_cast<std::uint8_t>(a2_9 ^ a2_2);
+            const std::uint8_t a2_13 = static_cast<std::uint8_t>(a2_9 ^ a2_4);
+            const std::uint8_t a2_14 = static_cast<std::uint8_t>(
+                a2_8 ^ a2_4 ^ a2_2);
+
+            const std::uint8_t a3_2 = m2[a3], a3_4 = m2[a3_2], a3_8 = m2[a3_4];
+            const std::uint8_t a3_9 = static_cast<std::uint8_t>(a3_8 ^ a3);
+            const std::uint8_t a3_11 = static_cast<std::uint8_t>(a3_9 ^ a3_2);
+            const std::uint8_t a3_13 = static_cast<std::uint8_t>(a3_9 ^ a3_4);
+            const std::uint8_t a3_14 = static_cast<std::uint8_t>(
+                a3_8 ^ a3_4 ^ a3_2);
+
             state[col * 4 + 0] = static_cast<std::uint8_t>(
-                gfMul(a0, 14) ^ gfMul(a1, 11) ^ gfMul(a2, 13) ^ gfMul(a3, 9));
+                a0_14 ^ a1_11 ^ a2_13 ^ a3_9);
             state[col * 4 + 1] = static_cast<std::uint8_t>(
-                gfMul(a0, 9) ^ gfMul(a1, 14) ^ gfMul(a2, 11) ^ gfMul(a3, 13));
+                a0_9 ^ a1_14 ^ a2_11 ^ a3_13);
             state[col * 4 + 2] = static_cast<std::uint8_t>(
-                gfMul(a0, 13) ^ gfMul(a1, 9) ^ gfMul(a2, 14) ^ gfMul(a3, 11));
+                a0_13 ^ a1_9 ^ a2_14 ^ a3_11);
             state[col * 4 + 3] = static_cast<std::uint8_t>(
-                gfMul(a0, 11) ^ gfMul(a1, 13) ^ gfMul(a2, 9) ^ gfMul(a3, 14));
+                a0_11 ^ a1_13 ^ a2_9 ^ a3_14);
         }
     }
 }
