@@ -12,6 +12,7 @@
 
 #include "../common/Constants.h"   // INF、MAX_CITY_COUNT 与统一错误文本
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFile>
@@ -36,6 +37,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -1297,25 +1299,354 @@ QWidget* MainWindow::buildPerformancePage()
 {
     QWidget* page = new QWidget(this);
 
-    QLabel* title = new QLabel(QStringLiteral("算法性能比较"), page);
-    QFont titleFont = title->font();
-    titleFont.setPointSize(titleFont.pointSize() + 4);
-    titleFont.setBold(true);
-    title->setFont(titleFont);
+    benchStatusLabel_ = new QLabel(
+        QStringLiteral("点击下面的按钮开始测试。全部耗时取自各算法模块"
+                       "随结果返回的运行时间，均为多次运行的平均值。"), page);
+    benchStatusLabel_->setWordWrap(true);
+    benchStatusLabel_->setStyleSheet(QStringLiteral("color: #444;"));
 
-    QLabel* body = new QLabel(
-        QStringLiteral(
-            "本页面将汇总以下运行时间，便于横向比较：\n\n"
-            "  · 最小生成树：Prim 与 Kruskal 在不同城市规模下的耗时\n"
-            "  · 对称加密：  AES-128 与 DES 对相同数据的加解密耗时\n\n"
-            "各算法的耗时数据已由对应模块随结果一并返回，"
-            "本页面属于可选的扩展功能，将在基础功能稳定后再行完善。"), page);
-    body->setWordWrap(true);
+    // ---- MST 比较 ----
+    mstBenchTable_ = new QTableWidget(page);
+    mstBenchTable_->setColumnCount(4);
+    mstBenchTable_->setHorizontalHeaderLabels(
+        QStringList() << QStringLiteral("算法")
+                      << QStringLiteral("城市数 n")
+                      << QStringLiteral("平均运行时间")
+                      << QStringLiteral("最低总造价"));
+    mstBenchTable_->horizontalHeader()->setStretchLastSection(true);
+    mstBenchTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
+    mstBenchButton_ = new QPushButton(QStringLiteral("运行 MST 比较"), page);
+
+    QLabel* mstNote = new QLabel(
+        QStringLiteral("随机生成保证连通的稠密图，n = 10 / 50 / 100 / 300 / 500，"
+                       "每个规模运行 5 次取平均。\n"
+                       "Prim 为邻接矩阵实现的 O(n²)，Kruskal 为边排序加并查集的 O(E log E)；"
+                       "稠密图下 E ≈ n²，故 Prim 通常更快。"), page);
+    mstNote->setWordWrap(true);
+    mstNote->setStyleSheet(QStringLiteral("color: #666;"));
+
+    QHBoxLayout* mstHeader = new QHBoxLayout();
+    mstHeader->addWidget(new QLabel(QStringLiteral("<b>最小生成树：Prim 与 Kruskal</b>"), page));
+    mstHeader->addStretch();
+    mstHeader->addWidget(mstBenchButton_);
+
+    QGroupBox* mstBox = new QGroupBox(page);
+    QVBoxLayout* mstLayout = new QVBoxLayout(mstBox);
+    mstLayout->addLayout(mstHeader);
+    mstLayout->addWidget(mstBenchTable_, 1);
+    mstLayout->addWidget(mstNote);
+
+    // ---- Crypto 比较 ----
+    cryptoBenchTable_ = new QTableWidget(page);
+    cryptoBenchTable_->setColumnCount(5);
+    cryptoBenchTable_->setHorizontalHeaderLabels(
+        QStringList() << QStringLiteral("算法")
+                      << QStringLiteral("数据量")
+                      << QStringLiteral("平均加密耗时")
+                      << QStringLiteral("平均解密耗时")
+                      << QStringLiteral("往返校验"));
+    cryptoBenchTable_->horizontalHeader()->setStretchLastSection(true);
+    cryptoBenchTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
+    cryptoBenchButton_ = new QPushButton(QStringLiteral("运行加密比较"), page);
+
+    QLabel* cryptoNote = new QLabel(
+        QStringLiteral("对 1 KiB / 16 KiB / 64 KiB / 256 KiB / 1 MiB 的文本分别加解密。\n"
+                       "DES 的分组只有 64 位、密钥仅 56 位有效，"
+                       "且轮函数需逐位查 8 个 S 盒，"
+                       "因此吞吐量远低于 AES —— 这正是它被 AES 取代的原因之一。"), page);
+    cryptoNote->setWordWrap(true);
+    cryptoNote->setStyleSheet(QStringLiteral("color: #666;"));
+
+    QHBoxLayout* cryptoHeader = new QHBoxLayout();
+    cryptoHeader->addWidget(new QLabel(
+        QStringLiteral("<b>对称加密：AES-128 与 DES</b>"), page));
+    cryptoHeader->addStretch();
+    cryptoHeader->addWidget(cryptoBenchButton_);
+
+    QGroupBox* cryptoBox = new QGroupBox(page);
+    QVBoxLayout* cryptoLayout = new QVBoxLayout(cryptoBox);
+    cryptoLayout->addLayout(cryptoHeader);
+    cryptoLayout->addWidget(cryptoBenchTable_, 1);
+    cryptoLayout->addWidget(cryptoNote);
+
+    QSplitter* splitter = new QSplitter(Qt::Vertical, page);
+    splitter->addWidget(mstBox);
+    splitter->addWidget(cryptoBox);
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 1);
 
     QVBoxLayout* layout = new QVBoxLayout(page);
-    layout->addWidget(title);
-    layout->addWidget(body);
-    layout->addStretch();
+    layout->addWidget(benchStatusLabel_);
+    layout->addWidget(splitter, 1);
+
+    connect(mstBenchButton_, &QPushButton::clicked,
+            this, &MainWindow::onRunMstBenchmark);
+    connect(cryptoBenchButton_, &QPushButton::clicked,
+            this, &MainWindow::onRunCryptoBenchmark);
+
+#ifndef CCS_HAS_MST_HEADER
+    mstBenchButton_->setEnabled(false);
+    mstBenchButton_->setToolTip(QStringLiteral("MST 模块尚未合入"));
+#endif
 
     return page;
+}
+
+// ===========================================================================
+//  性能比较：基准测试
+// ===========================================================================
+
+namespace {
+
+/// 生成一张随机连通无向图的造价矩阵。
+///
+/// 先随机连出一棵树保证连通（Prim / Kruskal 才必然成功），
+/// 再按 extraEdgeRatio 追加若干条额外链路，模拟稠密通信网。
+std::vector<std::vector<int> > makeRandomConnectedGraph(int n,
+                                                        int extraEdgeRatio,
+                                                        std::mt19937& rng)
+{
+    std::vector<std::vector<int> > cost(
+        static_cast<std::size_t>(n),
+        std::vector<int>(static_cast<std::size_t>(n), INF));
+
+    for (int i = 0; i < n; ++i)
+    {
+        cost[i][i] = 0;
+    }
+
+    std::uniform_int_distribution<int> weight(1, 500);
+
+    // 第 i 座城市与前面某座城市相连，保证整张图连通。
+    for (int i = 1; i < n; ++i)
+    {
+        std::uniform_int_distribution<int> parent(0, i - 1);
+        const int j = parent(rng);
+        const int w = weight(rng);
+        cost[i][j] = w;
+        cost[j][i] = w;
+    }
+
+    // 追加额外链路。i、j 遍历全部 1/2 组合后与随机数取模，
+    // 借此把「是否加边」的判定摊到每个组合上，效率高于枚举全部组合。
+    std::uniform_int_distribution<int> die(0, extraEdgeRatio - 1);
+    for (int i = 1; i < n; ++i)
+    {
+        for (int j = 0; j < i; ++j)
+        {
+            if (cost[i][j] != INF || die(rng) != 0)
+            {
+                continue;
+            }
+            const int w = weight(rng);
+            cost[i][j] = w;
+            cost[j][i] = w;
+        }
+    }
+
+    return cost;
+}
+
+/// 生成一段内容近似随机的可打印文本，避免压缩或全同字节带来的干扰。
+std::string makeTestData(std::size_t bytes)
+{
+    std::string data;
+    data.reserve(bytes);
+    for (std::size_t i = 0; i < bytes; ++i)
+    {
+        data += static_cast<char>('A' + (i * 7 + i / 26) % 26);
+    }
+    return data;
+}
+
+} // namespace
+
+void MainWindow::onRunMstBenchmark()
+{
+#ifndef CCS_HAS_MST_HEADER
+    return;
+#else
+    static const int kSizes[] = { 10, 50, 100, 300, 500 };
+    const int kSizeCount = static_cast<int>(sizeof(kSizes) / sizeof(kSizes[0]));
+    const int kRounds = 5;
+
+    mstBenchButton_->setEnabled(false);
+    mstBenchTable_->setRowCount(0);
+
+    // 固定种子，使每次演示得到相同的数据，便于复现与写入报告。
+    std::mt19937 rng(20260923u);
+
+    MSTService service;
+    int row = 0;
+
+    for (int sizeIndex = 0; sizeIndex < kSizeCount; ++sizeIndex)
+    {
+        const int n = kSizes[sizeIndex];
+        const std::vector<std::vector<int> > costs =
+            makeRandomConnectedGraph(n, 2, rng);
+
+        for (int algorithm = 0; algorithm < 2; ++algorithm)
+        {
+            const bool usePrim = (algorithm == 0);
+
+            double totalMs = 0.0;
+            long long lastCost = 0;
+            bool ok = true;
+
+            for (int round = 0; round < kRounds; ++round)
+            {
+                // 每轮重新装载数据，避免把上一轮的内部状态算进耗时。
+                service.clear();
+                service.setCityCount(n);
+                for (int i = 0; i < n; ++i)
+                {
+                    for (int j = 0; j < n; ++j)
+                    {
+                        if (i != j && costs[i][j] < INF)
+                        {
+                            service.setCost(i, j, costs[i][j]);
+                        }
+                    }
+                }
+
+                const MSTResult result = usePrim ? service.prim()
+                                                 : service.kruskal();
+                if (!result.success)
+                {
+                    ok = false;
+                    break;
+                }
+                totalMs += result.runningTimeMs;
+                lastCost = result.totalCost;
+            }
+
+            mstBenchTable_->insertRow(row);
+
+            const QString algorithmName = usePrim ? QStringLiteral("Prim")
+                                                  : QStringLiteral("Kruskal");
+            mstBenchTable_->setItem(row, 0, new QTableWidgetItem(algorithmName));
+            mstBenchTable_->setItem(row, 1,
+                new QTableWidgetItem(QString::number(n)));
+            mstBenchTable_->setItem(row, 2,
+                new QTableWidgetItem(ok
+                    ? QStringLiteral("%1 ms").arg(totalMs / kRounds, 0, 'f', 3)
+                    : QStringLiteral("失败")));
+            mstBenchTable_->setItem(row, 3,
+                new QTableWidgetItem(ok ? QString::number(lastCost)
+                                        : QStringLiteral("—")));
+
+            for (int column = 0; column < 4; ++column)
+            {
+                if (mstBenchTable_->item(row, column) != nullptr)
+                {
+                    mstBenchTable_->item(row, column)->setTextAlignment(Qt::AlignCenter);
+                }
+            }
+
+            ++row;
+            benchStatusLabel_->setText(
+                QStringLiteral("MST 比较进行中…… 已完成 %1/10").arg(row));
+            QApplication::processEvents();
+        }
+    }
+
+    benchStatusLabel_->setText(
+        QStringLiteral("MST 比较完成：每个规模运行 %1 次取平均，"
+                       "耗时取自模块内部计时。").arg(kRounds));
+    mstBenchButton_->setEnabled(true);
+#endif
+}
+
+void MainWindow::onRunCryptoBenchmark()
+{
+    static const std::size_t kSizes[] = {
+        1024u, 16384u, 65536u, 262144u, 1048576u
+    };
+    const int kSizeCount = static_cast<int>(sizeof(kSizes) / sizeof(kSizes[0]));
+
+    cryptoBenchButton_->setEnabled(false);
+    cryptoBenchTable_->setRowCount(0);
+
+    const std::string aesKey = "1234567890123456";   // 16 字节
+    const std::string desKey = "12345678";           // 8 字节
+
+    int row = 0;
+    for (int sizeIndex = 0; sizeIndex < kSizeCount; ++sizeIndex)
+    {
+        const std::size_t bytes = kSizes[sizeIndex];
+        const std::string data = makeTestData(bytes);
+
+        // 数据量越大单次耗时越长，相应减少重复次数，
+        // 否则 1 MiB 的 DES 会让界面等待过久。
+        const int rounds = (bytes <= 65536u) ? 5 : (bytes <= 262144u ? 3 : 1);
+
+        for (int algorithm = 0; algorithm < 2; ++algorithm)
+        {
+            const bool useAes = (algorithm == 0);
+            const std::string& key = useAes ? aesKey : desKey;
+
+            double encryptMs = 0.0;
+            double decryptMs = 0.0;
+            bool ok = true;
+
+            for (int round = 0; round < rounds; ++round)
+            {
+                const CryptoResult enc = useAes ? crypto_.encryptAES(data, key)
+                                                : crypto_.encryptDES(data, key);
+                if (!enc.success)
+                {
+                    ok = false;
+                    break;
+                }
+                const CryptoResult dec = useAes ? crypto_.decryptAES(enc.output, key)
+                                                : crypto_.decryptDES(enc.output, key);
+                if (!dec.success || dec.output != data)
+                {
+                    ok = false;
+                    break;
+                }
+                encryptMs += enc.runningTimeMs;
+                decryptMs += dec.runningTimeMs;
+            }
+
+            cryptoBenchTable_->insertRow(row);
+
+            cryptoBenchTable_->setItem(row, 0, new QTableWidgetItem(
+                useAes ? QStringLiteral("AES-128") : QStringLiteral("DES")));
+            cryptoBenchTable_->setItem(row, 1, new QTableWidgetItem(
+                bytes >= 1048576u
+                    ? QStringLiteral("1 MiB")
+                    : QStringLiteral("%1 KiB").arg(bytes / 1024u)));
+            cryptoBenchTable_->setItem(row, 2, new QTableWidgetItem(
+                ok ? QStringLiteral("%1 ms").arg(encryptMs / rounds, 0, 'f', 3)
+                   : QStringLiteral("失败")));
+            cryptoBenchTable_->setItem(row, 3, new QTableWidgetItem(
+                ok ? QStringLiteral("%1 ms").arg(decryptMs / rounds, 0, 'f', 3)
+                   : QStringLiteral("失败")));
+            cryptoBenchTable_->setItem(row, 4, new QTableWidgetItem(
+                ok ? QStringLiteral("通过（%1 次）").arg(rounds)
+                   : QStringLiteral("未通过")));
+
+            for (int column = 0; column < 5; ++column)
+            {
+                if (cryptoBenchTable_->item(row, column) != nullptr)
+                {
+                    cryptoBenchTable_->item(row, column)->setTextAlignment(Qt::AlignCenter);
+                }
+            }
+
+            ++row;
+            benchStatusLabel_->setText(
+                QStringLiteral("加密比较进行中…… 已完成 %1/10").arg(row));
+            QApplication::processEvents();
+        }
+    }
+
+    benchStatusLabel_->setText(
+        QStringLiteral("加密比较完成。数据量越大单次耗时越长，故重复次数随之减少："
+                       "1 KiB ~ 64 KiB 取 5 次平均，256 KiB 取 3 次，1 MiB 取 1 次。"
+                       "每一次都校验了 decrypt(encrypt(data)) == data。"));
+    cryptoBenchButton_->setEnabled(true);
 }

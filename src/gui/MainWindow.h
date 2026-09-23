@@ -86,6 +86,10 @@ private slots:
     void onClearCrypto();
     void onAlgorithmChanged();
 
+    // ---- 性能比较页 ----
+    void onRunMstBenchmark();
+    void onRunCryptoBenchmark();
+
 private:
     QWidget* buildNetworkPage();
     QWidget* buildHuffmanPage();
@@ -137,6 +141,13 @@ private:
     QPlainTextEdit* cryptoInputEdit_  = nullptr;
     QPlainTextEdit* cryptoOutputEdit_ = nullptr;
     QLabel*         cryptoHintLabel_  = nullptr;
+
+    // 性能比较页
+    QTableWidget*   mstBenchTable_    = nullptr;
+    QTableWidget*   cryptoBenchTable_ = nullptr;
+    QLabel*         benchStatusLabel_ = nullptr;
+    QPushButton*    mstBenchButton_   = nullptr;
+    QPushButton*    cryptoBenchButton_= nullptr;
 
 #ifdef CCS_HAS_MST_HEADER
     MSTService mst_;
