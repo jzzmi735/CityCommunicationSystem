@@ -1,0 +1,13 @@
+# 构建产物
+build/
+*.o
+*.obj
+*.exe
+*.pdb
+.vs/
+
+# 测试运行生成的产物（由 tests/test_huffman.cpp 重新生成）
+/data/CodeFile
+/data/TextFile
+/data/hfmTree
+/data/TreePrint
