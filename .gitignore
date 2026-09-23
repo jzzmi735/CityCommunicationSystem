@@ -4,6 +4,7 @@ build-*/
 build_*/
 out/
 bin/
+dist/
 *.o
 *.obj
 *.exe
@@ -53,14 +54,12 @@ desktop.ini
 *.bak
 *.orig
 
-# ---- Huffman 模块运行生成的产物 ----
-# data/ 下只有题目要求的输入 TobeTran 需要入库，
-# 其余四个文件均由 tests/test_huffman.cpp 或界面的文件按钮重新生成，
-# 提交它们只会在每次运行时产生无意义的二进制差异。
-/data/hfmTree
-/data/CodeFile
-/data/TextFile
-/data/TreePrint
+# ---- Huffman 模块的数据文件 ----
+# 注意：hfmTree / CodeFile / TextFile / TreePrint 这四个文件**需要入库**。
+# 它们是《共同开发规则和接口约定》第 26 节明确要求的交付物，
+# 且内容由固定的字符集与权值唯一确定，多次运行结果一致，
+# 因此提交它们是稳定的、不会产生无意义的差异。
+# 若需重新生成，运行 ctest 或使用界面 Huffman 页的文件按钮即可。
 
 # ---- 交换用的压缩包 ----
 # 成员之间传递代码请走 git 分支；确需打包时不要把压缩包提交进仓库。

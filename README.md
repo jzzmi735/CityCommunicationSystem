@@ -37,7 +37,32 @@ Crypto 模块为纯 C++ 实现，无外部依赖。
 
 ## 三、构建与运行
 
-以 Windows + PowerShell 为例，先确认 `g++` 来自 Qt 自带的 MinGW：
+### 方式一：一键脚本（推荐）
+
+在项目根目录执行：
+
+```powershell
+.\build.ps1
+```
+
+脚本会依次完成：配置 → 构建 → 运行全部测试 → 打包到 `dist\`。
+测试不通过会直接中止，不会产出有问题的包。
+
+```powershell
+.\build.ps1 -SkipDist    # 只构建与测试，不打包
+```
+
+若 Qt 不在 `D:\Qt`，先设置环境变量：
+
+```powershell
+$env:QT_ROOT = "E:\Qt"; .\build.ps1
+```
+
+> 脚本文件必须保存为 **UTF-8 带 BOM**。Windows PowerShell 5.1 读取无 BOM 的
+> `.ps1` 时按系统 ANSI 代码页解析，中文注释的字节会吞掉紧随其后的代码行，
+> 症状是若干语句被静默跳过且不报错。若另存后行为异常，先检查 BOM。
+
+### 方式二：手工构建
 
 ```powershell
 $env:PATH = "D:\Qt\Tools\mingw1310_64\bin;D:\Qt\6.9.3\mingw_64\bin;$env:PATH"
@@ -54,12 +79,12 @@ cmake --build build
 
 ```text
 build/bin/CityCommunicationSystem.exe     主程序
+build/bin/test_mst.exe                    MST 模块验收测试
+build/bin/test_huffman.exe                Huffman 模块验收测试
 build/bin/test_crypto.exe                 Crypto 模块验收测试
 ```
 
-### 部署运行时依赖
-
-首次运行前需要把 Qt 的 DLL 复制到可执行文件旁，否则程序会直接退出（退出码 127）：
+首次运行主程序前需把 Qt 的 DLL 复制到可执行文件旁，否则程序会直接退出（退出码 127）：
 
 ```powershell
 D:\Qt\6.9.3\mingw_64\bin\windeployqt.exe --release build\bin\CityCommunicationSystem.exe
@@ -72,47 +97,74 @@ cd build
 ctest --output-on-failure
 ```
 
-或直接执行 `build\bin\test_crypto.exe`，返回 0 表示全部通过。
+三个测试也可单独直接运行，返回 0 表示全部通过。
+注意 `test_huffman` 使用 `data/` 下的相对路径，需在项目根目录执行。
 
 ---
 
-## 四、目录结构
+## 四、发布与分发
+
+`.\build.ps1` 产出的 `dist\` 是**自包含**的发布包：已包含 Qt 运行库、
+平台插件与中文翻译，拷到任何 64 位 Windows 电脑双击即可运行，无需安装 Qt。
+
+```text
+dist/
+├── CityCommunicationSystem.exe   主程序
+├── Qt6*.dll                       Qt 运行库
+├── platforms/ iconengines/ ...    Qt 插件
+├── translations/                  中文翻译（标准对话框显示中文）
+├── data/                          题目要求的输入输出文件
+├── README.md
+└── VERSION.txt                    来源提交号与构建时间，便于追溯
+```
+
+分发方式按接收方需求选择：
+
+| 接收方 | 交付内容 |
+|---|---|
+| 只想运行程序 | `dist\` 整个文件夹 |
+| 需要源码并自行构建 | 完整项目 + 已装好的 Qt，运行 `.\build.ps1` |
+| 只需要源码 | 直接从 GitHub 克隆，见上方"构建与运行" |
+
+---
+
+## 五、目录结构
 
 ```text
 CityCommunicationSystem/
 ├── src/
-│   ├── common/Types.h          公共数据结构（三人共用）
+│   ├── common/
+│   │   ├── Types.h             公共数据结构：Edge / MSTResult / CryptoResult
+│   │   └── Constants.h         公共常量：INF、统一错误文本
 │   ├── mst/                    开发者 A：Prim / Kruskal
 │   ├── huffman/                开发者 B：Huffman 编码
 │   ├── crypto/                 开发者 C：AES / DES
-│   │   ├── CryptoSystem.h
-│   │   └── CryptoSystem.cpp
 │   ├── gui/                    开发者 C：Qt 界面
-│   │   ├── MainWindow.h/.cpp
-│   │   └── NetworkView.h/.cpp
+│   │   ├── MainWindow.h/.cpp   四页面主窗口
+│   │   └── NetworkView.h/.cpp  网络可视化控件
 │   └── main.cpp
-├── data/
+├── data/                       题目要求的输入输出文件（全部入库）
 │   ├── graph1.txt              题目图 1 的邻接矩阵（MST 测试输入）
-│   ├── TobeTran                待传输文本，内容为 I AM FROM CHINA（Huffman 输入）
+│   ├── TobeTran                待传输文本 I AM FROM CHINA（Huffman 输入）
 │   └── hfmTree / CodeFile / TextFile / TreePrint
-│                               Huffman 运行产物，由测试或界面按钮生成
+│                               Huffman 的四个输出，由界面按钮生成
 ├── tests/
-│   ├── test_mst.cpp
-│   ├── test_huffman.cpp
-│   └── test_crypto.cpp
-├── docs/                       开发规范与分工说明
+│   ├── test_mst.cpp            MST 验收测试（70 项断言）
+│   ├── test_huffman.cpp        Huffman 验收测试（60 项断言）
+│   ├── test_crypto.cpp         Crypto 验收测试（34 项断言）
+│   └── manual/                 界面端到端冒烟测试（38 项断言，手工运行）
+├── docs/
+│   ├── 共同开发规则和接口.md
+│   ├── 开发者C_AES_DES_Qt与系统集成.md
+│   └── report_mst.md           开发者 A 的 MST 模块设计报告
 ├── CMakeLists.txt
+├── build.ps1                   一键构建、测试与打包脚本
 └── README.md
 ```
 
-> `data/` 下只有 `graph1.txt` 与 `TobeTran` 是随仓库提供的输入文件，
-> Huffman 的四个产物已列入 `.gitignore`——它们每次运行都会重新生成，
-> 提交进仓库只会在每次运行时产生无意义的差异。
-> 执行 `ctest` 或使用界面上的文件按钮即可生成它们。
-
 ---
 
-## 五、使用说明
+## 六、使用说明
 
 ### 网络设计页
 
@@ -184,7 +236,7 @@ CityCommunicationSystem/
 
 ---
 
-## 六、开发约定摘要
+## 七、开发约定摘要
 
 完整规则见 [`docs/共同开发规则和接口.md`](docs/共同开发规则和接口.md)。
 
@@ -222,16 +274,10 @@ huffman_acceptance   60 项断言  含 TobeTran -> CodeFile -> TextFile 文件�
 模块**缺位时**主程序照常编译运行，对应页面提示"模块未就绪"，其余功能不受影响；
 模块**就位后**只需重新执行一次 CMake 配置即可自动启用，无需改动界面代码。
 
-### 集成进度
+### 集成状态
 
-三模块集成成果位于 `dev-gui-crypto` 分支，已提交 PR #1 等待评审：
-
-```text
-https://github.com/jzzmi735/CityCommunicationSystem/pull/1
-```
-
-按《共同开发规则和接口约定》第 4.2 节，需至少一名成员检查后再合并到 `main`。
-`main` 目前仍是初始状态，尚未包含任何模块代码。
+三个模块已全部合入 `main`，仓库当前即为可构建、可运行、测试全绿的完整版本。
+各开发分支（`dev-mst` / `dev-huffman` / `dev-gui-crypto`）保留供追溯。
 
 ### 图数据文件
 
@@ -242,9 +288,24 @@ https://github.com/jzzmi735/CityCommunicationSystem/pull/1
 build\bin\test_mst.exe data\graph1.txt
 ```
 
+### 实验报告
+
+程序本身已完成，报告中的算法原理、界面设计与系统集成等章节可引用本文件的实测数据：
+
+| 报告章节 | 可引用的内容 |
+|---|---|
+| AES / DES 原理与对比 | 第八节的实现说明与性能比较页的实测数据 |
+| 加解密实验 | `test_crypto` 的 34 项断言、FIPS-197 向量比对结果 |
+| GUI 总体架构与页面设计 | 第五节目录结构、第六节各页面使用说明 |
+| 系统集成 | 三个模块的统一接口约定、`ctest` 三项测试结果 |
+| 系统截图 | 运行 `dist\CityCommunicationSystem.exe` 后逐页截图 |
+| 最终运行说明 | 第四节的发布与分发 |
+
+开发者 A 的 MST 设计报告见 [`docs/report_mst.md`](docs/report_mst.md)。
+
 ---
 
-## 七、加密模块实现说明
+## 八、加密模块实现说明
 
 | 项目 | 说明 |
 |---|---|
