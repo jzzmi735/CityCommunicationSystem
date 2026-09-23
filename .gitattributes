@@ -1,0 +1,35 @@
+# ============================================================================
+#  换行符规则
+#
+#  Windows 上 git 常配置为 core.autocrlf=true，会在检出时把文本文件转成 CRLF。
+#  这对源码没影响，但本项目 data/ 下的文件是**程序输出**，内容参与比对
+#  （测试会断言 TreePrint 文件内容与 getTreePrint() 完全一致），
+#  若同一文件在不同机器上换行不同，就会反复出现"文件已修改"的假差异。
+#
+#  这里统一为 LF：仓库内与检出后都是 LF，任何平台上字节序列都一致。
+#  git 以「最后匹配的规则」为准，故具体规则放在通用规则之后。
+# ============================================================================
+
+* text=auto eol=lf
+
+*.cpp   text eol=lf
+*.h     text eol=lf
+*.hpp   text eol=lf
+*.txt   text eol=lf
+*.md    text eol=lf
+*.ps1   text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+
+# data/ 下全部为程序读写的数据文件，必须严格保持 LF，
+# 否则文件内容会随检出的机器而变化，导致测试结果不一致。
+data/** text eol=lf
+
+# 二进制文件不做任何转换
+*.exe  binary
+*.dll  binary
+*.a    binary
+*.lib  binary
+*.png  binary
+*.ico  binary
+*.zip  binary
