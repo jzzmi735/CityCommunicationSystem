@@ -68,6 +68,18 @@ private slots:
     void onClearNetwork();
     void onLoadSample();
 
+    // ---- Huffman 页 ----
+    void onBuildHuffmanTree();
+    void onLoadCharsetSample();
+    void onHuffmanEncode();
+    void onHuffmanDecode();
+    void onSaveTree();
+    void onLoadTree();
+    void onExportTreePrint();
+    void onReadTobeTran();
+    void onEncodeToCodeFile();
+    void onDecodeToTextFile();
+
     // ---- 安全通信页 ----
     void onEncrypt();
     void onDecrypt();
@@ -109,6 +121,15 @@ private:
     NetworkView*    networkView_     = nullptr;
     QPlainTextEdit* mstResultEdit_   = nullptr;
     QLabel*         mstSummaryLabel_ = nullptr;
+
+    // Huffman 页
+    QTableWidget*   charsetTable_     = nullptr;
+    QPushButton*    buildTreeButton_  = nullptr;
+    QTableWidget*   codeTableWidget_  = nullptr;
+    QPlainTextEdit* treePrintEdit_    = nullptr;
+    QPlainTextEdit* huffmanInputEdit_ = nullptr;
+    QPlainTextEdit* huffmanOutputEdit_= nullptr;
+    QLabel*         huffmanStatusLabel_ = nullptr;
 
     // 安全通信页
     QComboBox*      cryptoAlgoCombo_  = nullptr;

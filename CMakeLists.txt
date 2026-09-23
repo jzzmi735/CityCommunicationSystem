@@ -4,7 +4,8 @@
 #  对应《共同开发规则和接口约定》第 24 节：本文件属公共文件，由开发者 C 统一维护。
 #
 #  开发者 A / B 新增源文件时，**无需修改本文件**：
-#  构建脚本会自动收集 src/mst/*.cpp 与 src/huffman/*.cpp。
+#  构建脚本会自动收集 src/mst/*.cpp 与 src/huffman/*.cpp，
+#  以及 tests/ 下对应的测试文件。
 #  若确需修改本文件，请先同步 main 并通知其他成员。
 #
 #  构建方法见 README.md。
@@ -22,7 +23,7 @@ project(CityCommunicationSystem
 # ---------------------------------------------------------------------------
 
 # 算法层为纯 C++，不使用 Qt 的元对象系统以外的扩展；
-# 统一 C++17 以便使用结构化绑定等特性，且完全兼容 Qt 6。
+# 统一 C++17 以便使用结构化绑定与 std::filesystem，且完全兼容 Qt 6。
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -35,9 +36,9 @@ else()
 endif()
 
 # 单配置生成器下，把可执行文件集中输出到 bin/，便于文档第 29 节的发布整理。
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY        ${CMAKE_BINARY_DIR}/bin)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG  ${CMAKE_BINARY_DIR}/bin)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY          ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG    ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE  ${CMAKE_BINARY_DIR}/bin)
 
 # ---------------------------------------------------------------------------
 #  二、Qt 依赖
@@ -66,8 +67,8 @@ target_include_directories(crypto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # ---------------------------------------------------------------------------
 #  四、MST 模块（开发者 A）
 #
-#  开发者 A 把 Graph.cpp / MSTService.cpp 放入 src/mst/ 后自动参与构建，
-#  无需改动本文件。目录为空时本目标不会被创建。
+#  源文件按目录自动收集，开发者 A 新增 Graph.cpp / MSTService.cpp 之外的文件
+#  时无需改动本脚本。目录为空时本目标不会被创建。
 # ---------------------------------------------------------------------------
 
 file(GLOB MST_SOURCES CONFIGURE_DEPENDS
@@ -84,7 +85,8 @@ endif()
 # ---------------------------------------------------------------------------
 #  五、Huffman 模块（开发者 B）
 #
-#  同 MST 模块，开发者 B 把 HuffmanSystem.cpp 放入 src/huffman/ 即可。
+#  纯 C++ 实现，不依赖 Qt；错误通过返回值与 lastError() 上报。
+#  同样按目录自动收集源文件。
 # ---------------------------------------------------------------------------
 
 file(GLOB HUFFMAN_SOURCES CONFIGURE_DEPENDS
@@ -136,7 +138,7 @@ endif()
 #  七、测试目标
 #
 #  对应文档第 19 节：测试代码一律放在 tests/，不得写入 src/main.cpp。
-#  运行方式：cmake --build build && ./build/bin/test_crypto
+#  运行方式：cmake --build build && ctest --test-dir build --output-on-failure
 # ---------------------------------------------------------------------------
 
 enable_testing()
@@ -149,6 +151,7 @@ target_include_directories(test_crypto PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 add_test(NAME crypto_acceptance COMMAND test_crypto)
 
 # MST / Huffman 的测试目标同样按文件是否存在自动启用。
+
 file(GLOB MST_TESTS CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mst.cpp)
 
@@ -156,7 +159,7 @@ if(MST_TESTS AND TARGET mst)
     add_executable(test_mst ${MST_TESTS})
     target_link_libraries(test_mst PRIVATE mst)
 
-    # 开发者 A 的验收测试会接收一个图数据文件路径作为命令行参数。
+    # 开发者 A 的验收测试接收一个图数据文件路径作为命令行参数。
     add_test(NAME mst_acceptance
              COMMAND test_mst ${CMAKE_CURRENT_SOURCE_DIR}/data/graph1.txt)
     set_tests_properties(mst_acceptance PROPERTIES
@@ -169,7 +172,12 @@ file(GLOB HUFFMAN_TESTS CONFIGURE_DEPENDS
 if(HUFFMAN_TESTS AND TARGET huffman)
     add_executable(test_huffman ${HUFFMAN_TESTS})
     target_link_libraries(test_huffman PRIVATE huffman)
+
+    # 开发者 B 的验收测试使用 data/ 下的相对路径读写文件，
+    # 因此必须把工作目录固定为项目根目录。
     add_test(NAME huffman_acceptance COMMAND test_huffman)
+    set_tests_properties(huffman_acceptance PROPERTIES
+                         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 # ---------------------------------------------------------------------------

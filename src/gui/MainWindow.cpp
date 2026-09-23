@@ -14,24 +14,29 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFile>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTableWidget>
-#include <QHeaderView>
 #include <QVBoxLayout>
-#include <QSignalBlocker>
 
+#include <algorithm>
 #include <cstdint>
+#include <map>
+#include <string>
 #include <vector>
 
 namespace {
@@ -549,6 +554,368 @@ void MainWindow::onLoadSample()
 }
 
 // ===========================================================================
+//  Huffman 页
+// ===========================================================================
+
+void MainWindow::onLoadCharsetSample()
+{
+    // 以题目要求的 "I AM FROM CHINA" 为例，权值取各字符在该句中的出现次数。
+    static const char kChars[] = { 'I', 'A', 'M', 'F', 'R', 'O', 'C', 'H', 'N', ' ' };
+    static const int  kWeights[] = { 2, 2, 2, 1, 1, 1, 1, 1, 1, 3 };
+    const int count = static_cast<int>(sizeof(kWeights) / sizeof(kWeights[0]));
+
+    const QSignalBlocker blocker(charsetTable_);
+    charsetTable_->setRowCount(count);
+    for (int i = 0; i < count; ++i)
+    {
+        QTableWidgetItem* charItem = new QTableWidgetItem(QString(QChar(kChars[i])));
+        charItem->setTextAlignment(Qt::AlignCenter);
+        charsetTable_->setItem(i, 0, charItem);
+
+        QTableWidgetItem* weightItem = new QTableWidgetItem(QString::number(kWeights[i]));
+        weightItem->setTextAlignment(Qt::AlignCenter);
+        charsetTable_->setItem(i, 1, weightItem);
+    }
+
+    huffmanInputEdit_->setPlainText(QStringLiteral("I AM FROM CHINA"));
+    onBuildHuffmanTree();
+}
+
+void MainWindow::onBuildHuffmanTree()
+{
+#ifndef CCS_HAS_HUFFMAN_HEADER
+    return;
+#else
+    std::vector<char> chars;
+    std::vector<int>  weights;
+    std::vector<char> seen;
+
+    const int rowCount = charsetTable_->rowCount();
+    if (rowCount == 0)
+    {
+        QMessageBox::warning(this, QStringLiteral("字符集为空"),
+                             QStringLiteral("请先填写字符与权值，或点击「载入示例」。"));
+        return;
+    }
+
+    for (int row = 0; row < rowCount; ++row)
+    {
+        const QTableWidgetItem* charItem = charsetTable_->item(row, 0);
+        const QTableWidgetItem* weightItem = charsetTable_->item(row, 1);
+        if (charItem == nullptr || weightItem == nullptr)
+        {
+            QMessageBox::warning(this, QStringLiteral("输入不完整"),
+                QStringLiteral("第 %1 行没有填写完整。").arg(row + 1));
+            return;
+        }
+
+        const QString charText = charItem->text();
+        if (charText.isEmpty())
+        {
+            QMessageBox::warning(this, QStringLiteral("字符为空"),
+                QStringLiteral("第 %1 行的字符为空。").arg(row + 1));
+            return;
+        }
+        // 单个字符可能由多个 UTF-8 字节组成，此处按字节处理，
+        // 与 Huffman 模块的 char 接口保持一致。
+        if (charText.toUtf8().size() != 1)
+        {
+            QMessageBox::warning(this, QStringLiteral("字符不合法"),
+                QStringLiteral("第 %1 行填写了「%2」，本模块按单字节字符处理，"
+                               "请每行只填一个 ASCII 字符。")
+                    .arg(row + 1).arg(charText));
+            return;
+        }
+
+        const char ch = charText.toUtf8().at(0);
+        if (std::find(seen.begin(), seen.end(), ch) != seen.end())
+        {
+            QMessageBox::warning(this, QStringLiteral("字符重复"),
+                QStringLiteral("字符「%1」出现了多次，编码表要求字符互不相同。")
+                    .arg(charText));
+            return;
+        }
+        seen.push_back(ch);
+
+        bool ok = false;
+        const int weight = weightItem->text().trimmed().toInt(&ok);
+        if (!ok || weight <= 0)
+        {
+            QMessageBox::warning(this, QStringLiteral("权值不合法"),
+                QStringLiteral("第 %1 行的权值「%2」无效，请输入正整数。")
+                    .arg(row + 1).arg(weightItem->text()));
+            return;
+        }
+
+        chars.push_back(ch);
+        weights.push_back(weight);
+    }
+
+    if (!huffman_.initialize(chars, weights))
+    {
+        QMessageBox::warning(this, QStringLiteral("建树失败"),
+                             QString::fromStdString(huffman_.lastError()));
+        return;
+    }
+
+    // 填充编码表。
+    const std::map<char, std::string> table = huffman_.getCodeTable();
+    codeTableWidget_->setRowCount(static_cast<int>(table.size()));
+    int row = 0;
+    for (std::map<char, std::string>::const_iterator it = table.begin();
+         it != table.end(); ++it, ++row)
+    {
+        const QString display = (it->first == ' ')
+                              ? QStringLiteral("[SPACE]")
+                              : QString(QChar(it->first));
+
+        QTableWidgetItem* charItem = new QTableWidgetItem(display);
+        charItem->setTextAlignment(Qt::AlignCenter);
+        codeTableWidget_->setItem(row, 0, charItem);
+
+        QTableWidgetItem* codeItem = new QTableWidgetItem(
+            QString::fromStdString(it->second));
+        codeItem->setTextAlignment(Qt::AlignCenter);
+        codeTableWidget_->setItem(row, 1, codeItem);
+    }
+
+    treePrintEdit_->setPlainText(QString::fromStdString(huffman_.getTreePrint()));
+    huffmanStatusLabel_->setText(
+        QStringLiteral("建树完成：共 %1 个不同字符。").arg(table.size()));
+#endif
+}
+
+void MainWindow::onHuffmanEncode()
+{
+#ifndef CCS_HAS_HUFFMAN_HEADER
+    return;
+#else
+    const QString text = huffmanInputEdit_->toPlainText();
+    if (text.isEmpty())
+    {
+        QMessageBox::warning(this, QStringLiteral("没有输入"),
+                             QStringLiteral("请先输入待编码的文本。"));
+        return;
+    }
+
+    const std::string code = huffman_.encode(text.toUtf8().toStdString());
+    if (code.empty())
+    {
+        QMessageBox::warning(this, QStringLiteral("编码失败"),
+            QString::fromStdString(huffman_.lastError()));
+        return;
+    }
+
+    huffmanOutputEdit_->setPlainText(QString::fromStdString(code));
+
+    // 顺带给出编码前后的位长对比，便于报告与演示。
+    // 注意：Huffman 的优势体现在字符出现频率差异大、文本足够长时；
+    // 短文本因编码表本身的开销，编码后未必比定长编码更短，属正常现象。
+    const qulonglong originalBytes = static_cast<qulonglong>(text.toUtf8().size());
+    const qulonglong originalBits  = originalBytes * 8u;
+    const qulonglong encodedBits   = static_cast<qulonglong>(code.size());
+
+    QString summary = QStringLiteral("编码完成：原文 %1 字节（%2 bit），编码后 %3 bit")
+                          .arg(originalBytes).arg(originalBits).arg(encodedBits);
+    if (originalBytes > 0)
+    {
+        summary += QStringLiteral("，平均每字符 %1 bit")
+                       .arg(static_cast<double>(encodedBits)
+                            / static_cast<double>(originalBytes), 0, 'f', 2);
+    }
+    huffmanStatusLabel_->setText(summary);
+#endif
+}
+
+void MainWindow::onHuffmanDecode()
+{
+#ifndef CCS_HAS_HUFFMAN_HEADER
+    return;
+#else
+    // 译码默认读取输入框内容；若其中不是 0/1 串，则回退到 data/CodeFile。
+    QString codeText = huffmanInputEdit_->toPlainText().trimmed();
+    if (codeText.isEmpty() || codeText.contains(QRegularExpression("[^01]")))
+    {
+        QFile file(QStringLiteral("data/CodeFile"));
+        if (!file.exists() || !file.open(QIODevice::ReadOnly))
+        {
+            QMessageBox::warning(this, QStringLiteral("没有可译码的数据"),
+                QStringLiteral("输入框中没有 0/1 编码串，且读取 data/CodeFile 失败。\n\n"
+                               "请先执行「编码」，或点击「编码到 CodeFile」生成该文件。"));
+            return;
+        }
+        codeText = QString::fromUtf8(file.readAll()).trimmed();
+        file.close();
+        huffmanStatusLabel_->setText(QStringLiteral("已从 data/CodeFile 读取编码。"));
+    }
+
+    if (codeText.isEmpty())
+    {
+        QMessageBox::warning(this, QStringLiteral("没有输入"),
+                             QStringLiteral("编码串为空，无法译码。"));
+        return;
+    }
+
+    const std::string text = huffman_.decode(codeText.toUtf8().toStdString());
+    if (text.empty())
+    {
+        QMessageBox::warning(this, QStringLiteral("译码失败"),
+            QString::fromStdString(huffman_.lastError()));
+        return;
+    }
+
+    const QString plain = QString::fromUtf8(text.c_str(),
+                                            static_cast<int>(text.size()));
+    huffmanOutputEdit_->setPlainText(plain);
+    // 把译文回填到输入框，便于再次编码验证往返一致。
+    huffmanInputEdit_->setPlainText(plain);
+    huffmanStatusLabel_->setText(QStringLiteral("译码完成。"));
+#endif
+}
+
+void MainWindow::onSaveTree()
+{
+#ifndef CCS_HAS_HUFFMAN_HEADER
+    return;
+#else
+    const QString path = QStringLiteral("data/hfmTree");
+    if (!huffman_.saveTree(path.toStdString()))
+    {
+        QMessageBox::warning(this, QStringLiteral("保存失败"),
+            QString::fromStdString(huffman_.lastError()));
+        return;
+    }
+    huffmanStatusLabel_->setText(
+        QStringLiteral("Huffman 树已保存到 data/hfmTree。"));
+#endif
+}
+
+void MainWindow::onLoadTree()
+{
+#ifndef CCS_HAS_HUFFMAN_HEADER
+    return;
+#else
+    const QString path = QStringLiteral("data/hfmTree");
+    if (!huffman_.loadTree(path.toStdString()))
+    {
+        QMessageBox::warning(this, QStringLiteral("加载失败"),
+            QString::fromStdString(huffman_.lastError()));
+        return;
+    }
+
+    const std::map<char, std::string> table = huffman_.getCodeTable();
+    codeTableWidget_->setRowCount(static_cast<int>(table.size()));
+    int row = 0;
+    for (std::map<char, std::string>::const_iterator it = table.begin();
+         it != table.end(); ++it, ++row)
+    {
+        const QString display = (it->first == ' ')
+                              ? QStringLiteral("[SPACE]")
+                              : QString(QChar(it->first));
+        codeTableWidget_->setItem(row, 0, new QTableWidgetItem(display));
+        codeTableWidget_->setItem(
+            row, 1, new QTableWidgetItem(QString::fromStdString(it->second)));
+    }
+    treePrintEdit_->setPlainText(QString::fromStdString(huffman_.getTreePrint()));
+    huffmanStatusLabel_->setText(
+        QStringLiteral("已从 data/hfmTree 载入 Huffman 树，编码表已同步更新。"));
+#endif
+}
+
+void MainWindow::onExportTreePrint()
+{
+#ifndef CCS_HAS_HUFFMAN_HEADER
+    return;
+#else
+    const QString path = QStringLiteral("data/TreePrint");
+    if (!huffman_.writeTreePrint(path.toStdString()))
+    {
+        QMessageBox::warning(this, QStringLiteral("导出失败"),
+            QString::fromStdString(huffman_.lastError()));
+        return;
+    }
+    huffmanStatusLabel_->setText(
+        QStringLiteral("树形输出已导出到 data/TreePrint。"));
+#endif
+}
+
+void MainWindow::onReadTobeTran()
+{
+    const QString path = QStringLiteral("data/TobeTran");
+    QFile file(path);
+    if (!file.exists() || !file.open(QIODevice::ReadOnly))
+    {
+        QMessageBox::warning(this, QStringLiteral("读取失败"),
+            QStringLiteral("无法读取 %1。\n\n"
+                           "请确认程序的工作目录是项目根目录。").arg(path));
+        return;
+    }
+    const QString content = QString::fromUtf8(file.readAll());
+    file.close();
+
+    huffmanInputEdit_->setPlainText(content);
+    huffmanStatusLabel_->setText(
+        QStringLiteral("已读取 data/TobeTran（%1 字节）。").arg(content.toUtf8().size()));
+}
+
+void MainWindow::onEncodeToCodeFile()
+{
+#ifndef CCS_HAS_HUFFMAN_HEADER
+    return;
+#else
+    // 从文件编码（对应文档要求的 TobeTran -> CodeFile 流程）。
+    if (!huffman_.encodeFile("data/TobeTran", "data/CodeFile"))
+    {
+        QMessageBox::warning(this, QStringLiteral("编码失败"),
+            QString::fromStdString(huffman_.lastError()));
+        return;
+    }
+
+    // 顺带把编码结果读出来显示，便于与源文件对照。
+    QFile file(QStringLiteral("data/CodeFile"));
+    if (file.open(QIODevice::ReadOnly))
+    {
+        const QString code = QString::fromUtf8(file.readAll()).trimmed();
+        file.close();
+        huffmanOutputEdit_->setPlainText(code);
+        huffmanStatusLabel_->setText(
+            QStringLiteral("已编码 data/TobeTran 并写入 data/CodeFile（%1 bit）。")
+                .arg(code.size()));
+    }
+    else
+    {
+        huffmanStatusLabel_->setText(
+            QStringLiteral("已编码 data/TobeTran 并写入 data/CodeFile。"));
+    }
+#endif
+}
+
+void MainWindow::onDecodeToTextFile()
+{
+#ifndef CCS_HAS_HUFFMAN_HEADER
+    return;
+#else
+    if (!huffman_.decodeFile("data/CodeFile", "data/TextFile"))
+    {
+        QMessageBox::warning(this, QStringLiteral("译码失败"),
+            QString::fromStdString(huffman_.lastError()));
+        return;
+    }
+
+    QFile file(QStringLiteral("data/TextFile"));
+    if (file.open(QIODevice::ReadOnly))
+    {
+        const QString text = QString::fromUtf8(file.readAll());
+        file.close();
+        huffmanInputEdit_->setPlainText(text);
+        huffmanOutputEdit_->setPlainText(text);
+    }
+    huffmanStatusLabel_->setText(
+        QStringLiteral("已译码 data/CodeFile 并写入 data/TextFile。"));
+#endif
+}
+
+// ===========================================================================
 //  安全通信页
 // ===========================================================================
 
@@ -745,28 +1112,179 @@ QWidget* MainWindow::buildHuffmanPage()
 {
     QWidget* page = new QWidget(this);
 
-    QLabel* title = new QLabel(QStringLiteral("Huffman 编码与译码"), page);
-    QFont titleFont = title->font();
-    titleFont.setPointSize(titleFont.pointSize() + 4);
-    titleFont.setBold(true);
-    title->setFont(titleFont);
+    huffmanStatusLabel_ = new QLabel(page);
+    huffmanStatusLabel_->setWordWrap(true);
 
-#ifdef CCS_HAS_HUFFMAN_HEADER
-    QLabel* body = new QLabel(
-        QStringLiteral("Huffman 模块已检测到，界面接入中。"), page);
+    // ---- 左侧：字符集与权值 ----
+    charsetTable_ = new QTableWidget(page);
+    charsetTable_->setColumnCount(2);
+    charsetTable_->setHorizontalHeaderLabels(
+        QStringList() << QStringLiteral("字符") << QStringLiteral("权值"));
+    charsetTable_->horizontalHeader()->setStretchLastSection(true);
+    charsetTable_->setSelectionBehavior(QAbstractItemView::SelectItems);
+
+    QLabel* charsetHint = new QLabel(
+        QStringLiteral("第一列填单个字符（空格直接填一个空格），"
+                       "第二列填该字符的出现次数。字符不可重复，权值须为正整数。"),
+        page);
+    charsetHint->setWordWrap(true);
+    charsetHint->setStyleSheet(QStringLiteral("color: #666;"));
+
+    QPushButton* buildButton  = new QPushButton(QStringLiteral("建树"), page);
+    QPushButton* sampleButton = new QPushButton(QStringLiteral("载入示例"), page);
+    QPushButton* clearButton  = new QPushButton(QStringLiteral("清空"), page);
+
+    QHBoxLayout* buttonRow = new QHBoxLayout();
+    buttonRow->addWidget(buildButton);
+    buttonRow->addWidget(sampleButton);
+    buttonRow->addWidget(clearButton);
+
+    QGroupBox* charsetBox = new QGroupBox(QStringLiteral("字符集与权值"), page);
+    QVBoxLayout* charsetLayout = new QVBoxLayout(charsetBox);
+    charsetLayout->addWidget(charsetTable_, 1);
+    charsetLayout->addWidget(charsetHint);
+    charsetLayout->addLayout(buttonRow);
+
+    // ---- 右侧：编码表 ----
+    codeTableWidget_ = new QTableWidget(page);
+    codeTableWidget_->setColumnCount(2);
+    codeTableWidget_->setHorizontalHeaderLabels(
+        QStringList() << QStringLiteral("字符") << QStringLiteral("编码"));
+    codeTableWidget_->horizontalHeader()->setStretchLastSection(true);
+    codeTableWidget_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
+    QGroupBox* codeBox = new QGroupBox(QStringLiteral("编码表"), page);
+    QVBoxLayout* codeLayout = new QVBoxLayout(codeBox);
+    codeLayout->addWidget(codeTableWidget_);
+
+    // ---- 右侧：树形输出 ----
+    treePrintEdit_ = new QPlainTextEdit(page);
+    treePrintEdit_->setReadOnly(true);
+    QFont monoFont(QStringLiteral("Consolas"));
+    monoFont.setStyleHint(QFont::Monospace);
+    treePrintEdit_->setFont(monoFont);
+    treePrintEdit_->setPlaceholderText(
+        QStringLiteral("建树后此处显示 Huffman 树的直观形式。\n"
+                       "* 表示内部节点，括号内为权值，[SPACE] 表示空格字符。"));
+
+    QGroupBox* treeBox = new QGroupBox(QStringLiteral("Huffman 树"), page);
+    QVBoxLayout* treeLayout = new QVBoxLayout(treeBox);
+    treeLayout->addWidget(treePrintEdit_);
+
+    QSplitter* rightSplitter = new QSplitter(Qt::Vertical, page);
+    rightSplitter->addWidget(codeBox);
+    rightSplitter->addWidget(treeBox);
+    rightSplitter->setStretchFactor(0, 2);
+    rightSplitter->setStretchFactor(1, 3);
+
+    QSplitter* topSplitter = new QSplitter(Qt::Horizontal, page);
+    topSplitter->addWidget(charsetBox);
+    topSplitter->addWidget(rightSplitter);
+    topSplitter->setStretchFactor(0, 2);
+    topSplitter->setStretchFactor(1, 3);
+
+    // ---- 下半：编码 / 译码 ----
+    huffmanInputEdit_ = new QPlainTextEdit(page);
+    huffmanInputEdit_->setPlaceholderText(
+        QStringLiteral("在此输入待编码的文本；译码时粘贴由 0 和 1 组成的编码串。"));
+
+    huffmanOutputEdit_ = new QPlainTextEdit(page);
+    huffmanOutputEdit_->setReadOnly(true);
+    huffmanOutputEdit_->setPlaceholderText(QStringLiteral("编码或译码的结果显示在此处。"));
+
+    QPushButton* encodeButton = new QPushButton(QStringLiteral("编码"), page);
+    QPushButton* decodeButton = new QPushButton(QStringLiteral("译码"), page);
+
+    QHBoxLayout* codecButtons = new QHBoxLayout();
+    codecButtons->addWidget(encodeButton);
+    codecButtons->addWidget(decodeButton);
+    codecButtons->addStretch();
+
+    QGroupBox* inputBox = new QGroupBox(QStringLiteral("输入"), page);
+    QVBoxLayout* inputLayout = new QVBoxLayout(inputBox);
+    inputLayout->addWidget(huffmanInputEdit_, 1);
+    inputLayout->addLayout(codecButtons);
+
+    QGroupBox* outputBox = new QGroupBox(QStringLiteral("输出"), page);
+    QVBoxLayout* outputLayout = new QVBoxLayout(outputBox);
+    outputLayout->addWidget(huffmanOutputEdit_);
+
+    QSplitter* codecSplitter = new QSplitter(Qt::Horizontal, page);
+    codecSplitter->addWidget(inputBox);
+    codecSplitter->addWidget(outputBox);
+
+    // ---- 文件操作 ----
+    QPushButton* readTobeButton   = new QPushButton(QStringLiteral("读取 TobeTran"), page);
+    QPushButton* encodeFileButton = new QPushButton(QStringLiteral("编码到 CodeFile"), page);
+    QPushButton* decodeFileButton = new QPushButton(QStringLiteral("译码到 TextFile"), page);
+    QPushButton* saveTreeButton   = new QPushButton(QStringLiteral("保存 hfmTree"), page);
+    QPushButton* loadTreeButton   = new QPushButton(QStringLiteral("加载 hfmTree"), page);
+    QPushButton* exportTreeButton = new QPushButton(QStringLiteral("导出 TreePrint"), page);
+
+    QHBoxLayout* fileButtons = new QHBoxLayout();
+    fileButtons->addWidget(readTobeButton);
+    fileButtons->addWidget(encodeFileButton);
+    fileButtons->addWidget(decodeFileButton);
+    fileButtons->addSpacing(18);
+    fileButtons->addWidget(saveTreeButton);
+    fileButtons->addWidget(loadTreeButton);
+    fileButtons->addWidget(exportTreeButton);
+    fileButtons->addStretch();
+
+    QGroupBox* fileBox = new QGroupBox(
+        QStringLiteral("文件操作（均针对项目根目录下的 data/ 文件夹）"), page);
+    QVBoxLayout* fileLayout = new QVBoxLayout(fileBox);
+    fileLayout->addLayout(fileButtons);
+
+    // ---- 组装 ----
+    QSplitter* mainSplitter = new QSplitter(Qt::Vertical, page);
+    mainSplitter->addWidget(topSplitter);
+    mainSplitter->addWidget(codecSplitter);
+    mainSplitter->setStretchFactor(0, 3);
+    mainSplitter->setStretchFactor(1, 2);
+
+    QVBoxLayout* pageLayout = new QVBoxLayout(page);
+    pageLayout->addWidget(huffmanStatusLabel_);
+    pageLayout->addWidget(mainSplitter, 1);
+    pageLayout->addWidget(fileBox);
+
+    // ---- 信号连接 ----
+    connect(buildButton,  &QPushButton::clicked, this, &MainWindow::onBuildHuffmanTree);
+    connect(sampleButton, &QPushButton::clicked, this, &MainWindow::onLoadCharsetSample);
+    connect(clearButton,  &QPushButton::clicked, this, [this]() {
+        charsetTable_->setRowCount(0);
+        codeTableWidget_->setRowCount(0);
+        treePrintEdit_->clear();
+        huffmanOutputEdit_->clear();
+#ifndef CCS_HAS_HUFFMAN_HEADER
+        return;
 #else
-    QLabel* body = new QLabel(
-        QStringLiteral(
-            "本页面用于 Huffman 建树、编码、译码与树形输出。\n\n"
-            "当前状态：开发者 B 的 HuffmanSystem 尚未合入 main 分支。\n"
-            "模块到位后，本页面会自动启用，无需改动其他代码。"), page);
+        huffman_.clear();
+        huffmanStatusLabel_->setText(QStringLiteral("已清空。"));
 #endif
-    body->setWordWrap(true);
+    });
+    connect(encodeButton, &QPushButton::clicked, this, &MainWindow::onHuffmanEncode);
+    connect(decodeButton, &QPushButton::clicked, this, &MainWindow::onHuffmanDecode);
+    connect(readTobeButton,   &QPushButton::clicked, this, &MainWindow::onReadTobeTran);
+    connect(encodeFileButton, &QPushButton::clicked, this, &MainWindow::onEncodeToCodeFile);
+    connect(decodeFileButton, &QPushButton::clicked, this, &MainWindow::onDecodeToTextFile);
+    connect(saveTreeButton,   &QPushButton::clicked, this, &MainWindow::onSaveTree);
+    connect(loadTreeButton,   &QPushButton::clicked, this, &MainWindow::onLoadTree);
+    connect(exportTreeButton, &QPushButton::clicked, this, &MainWindow::onExportTreePrint);
 
-    QVBoxLayout* layout = new QVBoxLayout(page);
-    layout->addWidget(title);
-    layout->addWidget(body);
-    layout->addStretch();
+#ifndef CCS_HAS_HUFFMAN_HEADER
+    huffmanStatusLabel_->setText(
+        QStringLiteral("开发者 B 的 HuffmanSystem 尚未合入，本页面暂不可用。"));
+    charsetTable_->setEnabled(false);
+    buildButton->setEnabled(false);
+    sampleButton->setEnabled(false);
+    encodeButton->setEnabled(false);
+    decodeButton->setEnabled(false);
+    fileBox->setEnabled(false);
+#else
+    // 默认载入一组示例字符集，便于直接演示「建树 → 编码 → 译码」。
+    onLoadCharsetSample();
+#endif
 
     return page;
 }

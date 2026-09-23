@@ -91,8 +91,11 @@ CityCommunicationSystem/
 │   │   ├── MainWindow.h/.cpp
 │   │   └── NetworkView.h/.cpp
 │   └── main.cpp
-├── data/                       题目要求的输入输出文件
-│   ├── hfmTree   TobeTran   CodeFile   TextFile   TreePrint
+├── data/
+│   ├── graph1.txt              题目图 1 的邻接矩阵（MST 测试输入）
+│   ├── TobeTran                待传输文本，内容为 I AM FROM CHINA（Huffman 输入）
+│   └── hfmTree / CodeFile / TextFile / TreePrint
+│                               Huffman 运行产物，由测试或界面按钮生成
 ├── tests/
 │   ├── test_mst.cpp
 │   ├── test_huffman.cpp
@@ -101,6 +104,11 @@ CityCommunicationSystem/
 ├── CMakeLists.txt
 └── README.md
 ```
+
+> `data/` 下只有 `graph1.txt` 与 `TobeTran` 是随仓库提供的输入文件，
+> Huffman 的四个产物已列入 `.gitignore`——它们每次运行都会重新生成，
+> 提交进仓库只会在每次运行时产生无意义的差异。
+> 执行 `ctest` 或使用界面上的文件按钮即可生成它们。
 
 ---
 
@@ -116,6 +124,28 @@ CityCommunicationSystem/
    网络图中 **蓝色加粗** 的即为最小生成树的链路，浅灰虚线为全部可选链路。
 
 「加载示例」可一键填入一组 5 城市的演示数据；「清空」恢复初始状态。
+
+### Huffman 页
+
+1. 在「字符集与权值」表格中填写字符及其出现次数（每行一个 ASCII 字符，
+   不可重复，权值须为正整数）；点击「载入示例」可一键填入
+   `I AM FROM CHINA` 的字符统计；
+2. 点击「建树」，右侧同步显示**编码表**与 **Huffman 树**的直观形式
+   （`*` 为内部节点，括号内为权值，`[SPACE]` 表示空格）；
+3. 在下方输入文本点击「编码」得到 0/1 编码串；把编码串放回输入框
+   点击「译码」即可还原原文。译码时若输入框内不是 0/1 串，
+   会自动改从 `data/CodeFile` 读取；
+4. 文件操作按钮对应文档第 20 节要求的完整流程：
+
+   ```text
+   读取 TobeTran  →  编码到 CodeFile  →  译码到 TextFile
+   保存 hfmTree   ←→  加载 hfmTree
+   导出 TreePrint
+   ```
+
+> 说明：Huffman 的压缩优势体现在字符频率差异大且文本足够长时。
+> 对 `I AM FROM CHINA` 这类短文本，编码后为 48 bit（平均 3.2 bit/字符），
+> 虽然优于 8 bit 的定长 ASCII，但增益有限，属正常现象。
 
 ### 安全通信页
 
@@ -151,9 +181,17 @@ CityCommunicationSystem/
 | 模块 | 状态 | 说明 |
 |---|---|---|
 | 网络设计（MST） | ✅ 已就绪 | 开发者 A 的 `src/mst/` 已合入 |
-| Huffman | ⏳ 等待中 | 开发者 B 的 `HuffmanSystem.h` 尚未提供 |
+| Huffman | ✅ 已就绪 | 开发者 B 的 `src/huffman/` 已合入 |
 | 安全通信（Crypto） | ✅ 已就绪 | 开发者 C |
 | 性能比较 | ⏳ 待完善 | 可选扩展 |
+
+三个模块均已接入，`ctest` 共三项验收测试，全部通过：
+
+```text
+crypto_acceptance    34 项断言  含 FIPS-197 官方向量比对
+mst_acceptance       70 项断言  含独立参考实现交叉验证
+huffman_acceptance   60 项断言  含 TobeTran -> CodeFile -> TextFile 文件流程
+```
 
 模块**缺位时**主程序照常编译运行，对应页面提示"模块未就绪"，其余功能不受影响；
 模块**就位后**只需重新执行一次 CMake 配置即可自动启用，无需改动界面代码。
